@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mapa de Datos Mundial</title>
+  <link rel="stylesheet" href="leaflet.css" />
+  <script src="leaflet.js"></script>
+  <!-- xlsx.min.js es OPCIONAL: si está, permite abrir .xlsx directamente -->
+  <script src="xlsx.min.js" onerror="console.log('xlsx no encontrado, solo CSV disponible')"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; height: 100vh; display: flex; overflow: hidden; }
+
+    #sidebar { width: 300px; min-width: 300px; background: #16213e; border-right: 1px solid #0f3460; display: flex; flex-direction: column; z-index: 1000; transition: width 0.3s, min-width 0.3s; }
+    #sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; }
+
+    .sidebar-header { background: #0f3460; padding: 18px 16px; }
+    .sidebar-header h1 { font-size: 15px; font-weight: 700; color: #e94560; white-space: nowrap; }
+
+    .sidebar-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+    .sidebar-body::-webkit-scrollbar { width: 6px; }
+    .sidebar-body::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+    /* scrollbar caja multiselección */
+    div[style*="max-height:160px"]::-webkit-scrollbar { width: 4px; }
+    div[style*="max-height:160px"]::-webkit-scrollbar-thumb { background: #e94560; border-radius: 2px; }
+
+    .upload-area { border: 2px dashed #0f3460; border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; position: relative; transition: all 0.3s; }
+    .upload-area:hover { border-color: #e94560; background: rgba(233,69,96,0.05); }
+    .upload-area input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .upload-icon { font-size: 30px; margin-bottom: 8px; }
+    .upload-text { font-size: 13px; color: #8892b0; line-height: 1.6; }
+    .upload-text strong { color: #ccd6f6; }
+    .upload-text em { color: #e94560; font-style: normal; font-size: 12px; }
+
+    .file-loaded { display: none; background: rgba(100,255,150,0.1); border: 1px solid #64ff96; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #64ff96; word-break: break-all; }
+
+    .section-label { font-size: 10px; font-weight: 700; color: #8892b0; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+
+    .hint { background: rgba(15,52,96,0.5); border-left: 3px solid #e94560; border-radius: 4px; padding: 12px; font-size: 12px; color: #8892b0; line-height: 1.8; }
+    .hint strong { color: #ccd6f6; }
+    .hint code { background: #0f3460; padding: 1px 6px; border-radius: 3px; color: #e94560; font-size: 11px; }
+
+    .filter-select { width: 100%; background: #0f3460; border: 1px solid #1a1a2e; color: #ccd6f6; padding: 9px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; margin-bottom: 10px; }
+    .filter-select:focus { outline: none; border-color: #e94560; }
+    .filter-select option { background: #0f3460; }
+
+    .color-col-select { width: 100%; background: #0f3460; border: 1px solid #e94560; color: #ccd6f6; padding: 8px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .color-col-select:focus { outline: none; }
+
+    .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat { background: #0f3460; border-radius: 8px; padding: 12px; text-align: center; }
+    .stat-n { font-size: 24px; font-weight: 700; color: #e94560; }
+    .stat-l { font-size: 10px; color: #8892b0; margin-top: 2px; text-transform: uppercase; }
+
+    .btn-clear { display: none; width: 100%; padding: 10px; background: rgba(233,69,96,0.15); border: 1px solid rgba(233,69,96,0.5); border-radius: 8px; color: #e94560; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn-clear:hover { background: rgba(233,69,96,0.3); }
+
+    .collapse-toggle { position: absolute; top: 50%; left: 300px; transform: translateY(-50%); z-index: 1001; background: #0f3460; border: none; color: #e94560; width: 22px; height: 48px; cursor: pointer; border-radius: 0 6px 6px 0; font-size: 16px; transition: left 0.3s; display: flex; align-items: center; justify-content: center; }
+    #sidebar.collapsed ~ .collapse-toggle { left: 0; }
+
+    #map-wrap { flex: 1; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    .legend-items { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccd6f6; }
+    .legend-dot { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); flex-shrink: 0; }
+
+    .popup-inner { font-size: 13px; max-width: 280px; }
+    .popup-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid; }
+    .popup-row { margin: 5px 0; color: #333; line-height: 1.4; }
+    .popup-row strong { color: #0f3460; }
+
+    /* Buscador flotante */
+    #searcher {
+      position: absolute;
+      top: 16px; right: 16px;
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      width: 260px;
+      transition: right 0.35s cubic-bezier(.4,0,.2,1);
+    }
+    #searchWrap {
+      display: flex;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    #searchInput {
+      flex: 1;
+      border: none;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-family: 'Segoe UI', sans-serif;
+      outline: none;
+    }
+    #searchBtn {
+      background: #0f3460;
+      border: none;
+      color: white;
+      padding: 0 14px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background 0.2s;
+    }
+    #searchBtn:hover { background: #e94560; }
+    #searchResults {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      max-height: 200px;
+      overflow-y: auto;
+      display: none;
+    }
+    .search-result-item {
+      padding: 9px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background 0.15s;
+    }
+    .search-result-item:hover { background: #f0f4ff; color: #0f3460; font-weight: 600; }
+    .search-result-item:last-child { border-bottom: none; }
+
+    #toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(80px); background: #0f3460; color: #ccd6f6; padding: 12px 24px; border-radius: 8px; font-size: 13px; border: 1px solid #e94560; z-index: 9999; transition: transform 0.4s; pointer-events: none; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── DRAWERS (estadísticas y comparar) ── */
+    .stats-drawer {
+      position: fixed;
+      top: 0;
+      height: 100vh;
+      width: 460px;
+      background: #16213e;
+      border-left: 1px solid #0f3460;
+      z-index: 4000;
+      display: flex;
+      flex-direction: column;
+      transition: right 0.35s cubic-bezier(.4,0,.2,1);
+      box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+    }
+    #statsDrawer  { right: -480px; }
+    #compareDrawer{ right: -480px; }
+    #statsDrawer.open   { right: 0; }
+    #compareDrawer.open { right: 0; }
+    /* Cuando los dos están abiertos */
+    #statsDrawer.open.both   { right: 460px; }
+    #compareDrawer.open.both { right: 0; }
+
+    /* Tabs de apertura laterales */
+    .drawer-tab {
+      display: none;
+      position: fixed;
+      transform: translateY(-50%);
+      z-index: 4001;
+      background: #0f3460;
+      border: none;
+      border-radius: 8px 0 0 8px;
+      width: 32px;
+      height: 80px;
+      cursor: pointer;
+      writing-mode: vertical-rl;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      transition: background 0.2s, right 0.35s cubic-bezier(.4,0,.2,1);
+      align-items: center;
+      justify-content: center;
+    }
+    .drawer-tab.visible { display: flex; }
+    #statsDrawerTab   { top: calc(50% - 50px); right: 0; color: #3498db; }
+    #compareDrawerTab { top: calc(50% + 50px);  right: 0; color: #f39c12; }
+    #statsDrawerTab.panel-open   { right: 460px; background: #e94560; color: white; }
+    #compareDrawerTab.panel-open { right: 460px; background: #e94560; color: white; }
+    /* Cuando ambos abiertos, el de stats se va más a la izquierda */
+    #statsDrawerTab.both-open   { right: 920px; }
+    #compareDrawerTab.both-open { right: 460px; }
+    .drawer-tab:hover { background: #1a4a80; }
+
+    /* Cabecera del drawer */
+    .drawer-header {
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #statsDrawer   .drawer-header { background: #0f3460; }
+    #compareDrawer .drawer-header { background: #1a2a0f; border-bottom-color: rgba(243,156,18,0.3); }
+    .drawer-header h2 { font-size: 14px; font-weight: 700; color: #ccd6f6; }
+    .drawer-close {
+      background: rgba(233,69,96,0.2);
+      border: 1px solid #e94560;
+      color: #e94560;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s;
+    }
+    .drawer-close:hover { background: rgba(233,69,96,0.4); }
+
+    /* Filtros dentro del drawer */
+    .drawer-filters {
+      background: #0a1628;
+      border-bottom: 1px solid #0f3460;
+      padding: 10px 14px;
+      flex-shrink: 0;
+    }
+    .drawer-filters-title {
+      font-size: 10px; font-weight: 700; color: #8892b0;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer;
+    }
+    .drawer-filters-title span { color: #3498db; font-size: 14px; transition: transform 0.2s; }
+    .drawer-filters-title span.collapsed { transform: rotate(-90deg); }
+    .drawer-filters-body { display: flex; flex-direction: column; gap: 6px; }
+    .drawer-filters-body.hidden { display: none; }
+    .drawer-filter-row { display: flex; align-items: center; gap: 8px; }
+    .drawer-filter-label { font-size: 11px; color: #8892b0; min-width: 70px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .drawer-filter-select {
+      flex: 1; background: #16213e; border: 1px solid #0f3460;
+      color: #ccd6f6; padding: 5px 8px; border-radius: 6px;
+      font-size: 12px; cursor: pointer;
+    }
+    .drawer-filter-select:focus { outline: none; border-color: #3498db; }
+    .drawer-filter-select option { background: #0f3460; }
+
+    /* Botón reiniciar filtros dentro de drawers */
+    .drawer-reset-filters-btn {
+      width: 100%;
+      padding: 7px;
+      margin-top: 8px;
+      background: rgba(155,89,182,0.12);
+      border: 1px solid rgba(155,89,182,0.4);
+      border-radius: 6px;
+      color: #9b59b6;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .drawer-reset-filters-btn:hover { background: rgba(155,89,182,0.25); }
+
+    /* Selector de gráficos */
+    .drawer-chart-selector {
+      background: #0a1628; border-bottom: 1px solid #0f3460;
+      padding: 10px 14px; flex-shrink: 0;
+    }
+    .drawer-chart-selector-title {
+      font-size: 10px; font-weight: 700; color: #8892b0;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer;
+    }
+    .drawer-chart-selector-title span { color: #3498db; font-size: 14px; transition: transform 0.2s; }
+    .drawer-chart-selector-title span.collapsed { transform: rotate(-90deg); }
+    .chart-toggle-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chart-toggle-list.hidden { display: none; }
+    .chart-toggle-btn {
+      padding: 4px 10px; border-radius: 20px;
+      border: 1px solid #0f3460; background: #16213e;
+      color: #8892b0; font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .chart-toggle-btn.active { background: rgba(52,152,219,0.2); border-color: #3498db; color: #3498db; }
+
+    /* Tabs y contenido */
+    .stats-tabs {
+      display: flex; background: #0a1628;
+      border-bottom: 1px solid #0f3460;
+      overflow-x: auto; flex-shrink: 0;
+    }
+    .stats-tabs::-webkit-scrollbar { height: 3px; }
+    .stats-tabs::-webkit-scrollbar-thumb { background: #0f3460; }
+    .stats-tab {
+      padding: 9px 14px; font-size: 12px; font-weight: 600;
+      color: #8892b0; cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    .stats-tab:hover { color: #ccd6f6; }
+    .stats-tab.active { color: #e94560; border-bottom-color: #e94560; }
+    .stats-content { flex: 1; overflow-y: auto; padding: 14px; }
+    .stats-content::-webkit-scrollbar { width: 4px; }
+    .stats-content::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 2px; }
+    .chart-section { display: none; }
+    .chart-section.active { display: block; }
+    .chart-title {
+      font-size: 11px; font-weight: 700; color: #8892b0;
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+    }
+    .chart-wrap {
+      background: #0a1628; border-radius: 10px;
+      padding: 14px; margin-bottom: 12px; border: 1px solid #0f3460;
+    }
+    .chart-wrap canvas { max-height: 240px; }
+    .chart-wrap.hidden { display: none; }
+    .chart-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 7px; margin-top: 10px;
+    }
+    .chart-summary.hidden { display: none; }
+    .chart-summary-item {
+      background: #0f3460; border-radius: 8px;
+      padding: 9px; text-align: center;
+    }
+    .chart-summary-item .cs-num { font-size: 17px; font-weight: 700; }
+    .chart-summary-item .cs-lbl { font-size: 10px; color: #8892b0; margin-top: 3px; }
+    .no-data-msg { text-align: center; color: #8892b0; font-size: 13px; padding: 40px 20px; }
+
+    /* Botones del sidebar */
+    .btn-stats {
+      display: none; width: 100%; padding: 10px;
+      background: rgba(52,152,219,0.15); border: 1px solid rgba(52,152,219,0.5);
+      border-radius: 8px; color: #3498db; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; margin-bottom: 6px;
+    }
+    .btn-stats:hover { background: rgba(52,152,219,0.3); }
+    .btn-compare {
+      display: none; width: 100%; padding: 10px;
+      background: rgba(243,156,18,0.15); border: 1px solid rgba(243,156,18,0.5);
+      border-radius: 8px; color: #f39c12; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; margin-bottom: 6px;
+    }
+    .btn-compare:hover { background: rgba(243,156,18,0.3); }
+
+    /* Botón reiniciar filtros */
+    .btn-reset-filters {
+      display: none;
+      width: 100%;
+      padding: 8px;
+      background: rgba(155,89,182,0.12);
+      border: 1px solid rgba(155,89,182,0.4);
+      border-radius: 6px;
+      color: #9b59b6;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+    }
+    .btn-reset-filters:hover { background: rgba(155,89,182,0.25); }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h1>🌍 Visualizador de datos</h1>
+  </div>
+  <div class="sidebar-body">
+
+    <div>
+      <div class="section-label">Archivo de datos</div>
+      <div class="upload-area" id="uploadArea">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+        <div class="upload-icon">📂</div>
+        <div class="upload-text">
+          <strong>Haz clic aquí</strong> para seleccionar tu archivo<br>
+          <em>Acepta: .xlsx, .xls y .csv</em>
+        </div>
+      </div>
+      <div class="file-loaded" id="fileLoaded">✓ <span id="fileNameSpan"></span></div>
+    </div>
+
+    <div class="hint" id="hintBox">
+      <strong>Columnas necesarias:</strong><br>
+      • <code>latitud</code> o <code>lat</code><br>
+      • <code>longitud</code> o <code>lon</code><br><br>
+      <strong>Si tu Excel no abre:</strong><br>
+      En Excel → Archivo → Guardar como → <code>CSV UTF-8</code> y súbelo en formato .csv<br><br>
+      <strong>Controles:</strong><br>
+      • Rueda del ratón → Zoom<br>
+      • Clic y arrastrar → Mover<br>
+      • Clic en punto → Ver datos
+    </div>
+
+    <div id="filtersArea" style="display:none">
+      <div class="section-label">Filtros</div>
+      <div id="filtersContainer"></div>
+      <button class="btn-reset-filters" id="btnResetFilters">↺ Reiniciar filtros</button>
+    </div>
+
+    <div id="colorKeySection" style="display:none">
+      <div class="section-label">🎨 Color de puntos por</div>
+      <select class="color-col-select" id="colorColSelect"></select>
+      <div id="legendContainer"></div>
+    </div>
+
+    <div id="statsArea" style="display:none">
+      <div class="section-label">Estadísticas</div>
+      <div class="stats-row">
+        <div class="stat"><div class="stat-n" id="statTotal">0</div><div class="stat-l">Total</div></div>
+        <div class="stat"><div class="stat-n" id="statVisible">0</div><div class="stat-l">Visibles</div></div>
+      </div>
+    </div>
+
+    <button class="btn-stats" id="btnStats">📊 Ver estadísticas</button>
+    <button class="btn-compare" id="btnCompare">⚖️ Comparar</button>
+    <button class="btn-clear" id="btnClear">✕ Limpiar datos</button>
+  </div>
+</div>
+
+<button class="collapse-toggle" id="collapseBtn">‹</button>
+
+<div id="map-wrap">
+  <div id="map"></div>
+  <!-- Buscador flotante -->
+  <div id="searcher">
+    <div id="searchWrap">
+      <input id="searchInput" type="text" placeholder="🔍 Buscar empresa...">
+      <button id="searchBtn">↵</button>
+    </div>
+    <div id="searchResults"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<!-- ── TABS de apertura ── -->
+<button class="drawer-tab" id="statsDrawerTab">📊 STATS</button>
+<button class="drawer-tab" id="compareDrawerTab">⚖️ COMP.</button>
+
+<!-- ── DRAWER A: ESTADÍSTICAS ── -->
+<div class="stats-drawer" id="statsDrawer">
+  <div class="drawer-header">
+    <h2>📊 Estadísticas</h2>
+    <button class="drawer-close" id="drawerClose">✕</button>
+  </div>
+  <div class="drawer-filters">
+    <div class="drawer-filters-title" id="drawerFiltersToggle">🔽 Filtros <span id="drawerFiltersArrow">▼</span></div>
+    <div class="drawer-filters-body" id="drawerFiltersBody"></div>
+    <button class="drawer-reset-filters-btn" id="statsResetFiltersBtn">↺ Reiniciar filtros</button>
+  </div>
+  <div class="drawer-chart-selector">
+    <div class="drawer-chart-selector-title" id="drawerChartSelectorToggle">👁 Gráficos visibles <span id="drawerChartSelectorArrow">▼</span></div>
+    <div class="chart-toggle-list" id="chartToggleList"></div>
+  </div>
+  <div class="stats-tabs" id="statsTabs"></div>
+  <div class="stats-content" id="statsContent"></div>
+</div>
+
+<!-- ── DRAWER B: COMPARAR ── -->
+<div class="stats-drawer" id="compareDrawer">
+  <div class="drawer-header">
+    <h2>⚖️ Comparar</h2>
+    <button class="drawer-close" id="compareDrawerClose">✕</button>
+  </div>
+  <div class="drawer-filters">
+    <div class="drawer-filters-title" id="cmpFiltersToggle">🔽 Filtros <span id="cmpFiltersArrow">▼</span></div>
+    <div class="drawer-filters-body" id="cmpFiltersBody"></div>
+    <button class="drawer-reset-filters-btn" id="cmpResetFiltersBtn">↺ Reiniciar filtros</button>
+  </div>
+  <div class="drawer-chart-selector">
+    <div class="drawer-chart-selector-title" id="cmpChartSelectorToggle">👁 Gráficos visibles <span id="cmpChartSelectorArrow">▼</span></div>
+    <div class="chart-toggle-list" id="cmpChartToggleList"></div>
+  </div>
+  <div class="stats-tabs" id="cmpTabs"></div>
+  <div class="stats-content" id="cmpContent"></div>
+</div>
+
+<script>
+// ── MAPA ───────────────────────────────────────
+const map = L.map('map', { center:[20,0], zoom:2, minZoom:2, maxZoom:18 });
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom:19
+}).addTo(map);
+
+// ── ESTADO ─────────────────────────────────────
+let allData=[], filteredData=[], latKey, lonKey;
+let currentFilters={}, colorColumn=null, colorMap={}, filterKeys=[];
+const markerLayer = L.layerGroup().addTo(map);
+
+// ── COLORES ────────────────────────────────────
+const PALETTE = ['#2ecc71','#e74c3c','#3498db','#f39c12','#9b59b6','#1abc9c','#e91e63','#ff5722','#00bcd4','#8bc34a','#ffc107','#673ab7'];
+
+function norm(s) {
+  return String(s).toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+const FIXED_MAPS = {
+  // Valores exactos del CSV (normalizados: minúsculas, sin tildes)
+  'facturacion anual': {
+    '<0,5m ':         '#e74c3c',  // rojo
+    '<0,5m':          '#e74c3c',
+    '0.6m - 1.5m':    '#e67e22',  // naranja
+    '1.5m - 3m':      '#f1c40f',  // amarillo
+    '3m - 6m':        '#a8d44b',  // verde clarito
+    '6m - 15m':       '#27ae60',  // verde
+    '+++':            '#2980b9',  // azul
+  },
+  'personal': {
+    '+50':    '#e74c3c',  // rojo
+    '+100':   '#e67e22',  // naranja
+    '+250':   '#f1c40f',  // amarillo
+    '+500':   '#a8d44b',  // verde clarito
+    '+1000':  '#2ecc71',  // verde
+    '+5000':  '#1a7abf',  // azul medio
+    '+10000': '#2980b9',  // azul
+  },
+  'interes': {
+    '0- ya cliente':    '#2980b9',
+    '0 - ya cliente':   '#2980b9',
+    '0- ya es cliente': '#2980b9',
+    '0 - ya es cliente':'#2980b9',
+    '1- alto':          '#2ecc71',
+    '1 - alto':         '#2ecc71',
+    '2- medio':         '#e67e22',
+    '2 - medio':        '#e67e22',
+    '3- bajo':          '#e74c3c',
+    '3 - bajo':         '#e74c3c',
+    '3 -bajo':          '#e74c3c',
+  },
+};
+
+function makeColorMap(colName, vals) {
+  const nc  = norm(colName);
+  const out = {};
+  const fixedMap = FIXED_MAPS[nc];
+
+  if (fixedMap) {
+    vals.forEach(v => {
+      // Normalización ultra-flexible: quita €, apóstrofes, espacios extra
+      const clean = s => norm(s).replace(/[€$£´`''']/g,'').replace(/\s+/g,' ').trim();
+      const cvClean = clean(v);
+
+      // Buscar coincidencia limpiando ambos lados
+      const match = Object.keys(fixedMap).find(k => clean(k) === cvClean);
+      out[String(v)] = match ? fixedMap[match] : '#aaaaaa';
+    });
+    return out;
+  }
+
+  vals.sort().forEach((v,i) => { out[String(v)] = PALETTE[i % PALETTE.length]; });
+  return out;
+}
+
+// ── LEER ARCHIVO ───────────────────────────────
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if (ext === 'csv') {
+    // Leer CSV directamente, sin librería externa
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = parseCSV(ev.target.result);
+        document.getElementById('fileNameSpan').textContent = file.name;
+        loadData(data);
+      } catch(err) { showToast('❌ Error leyendo CSV: ' + err.message); }
+    };
+    reader.readAsText(file, 'UTF-8');
+
+  } else if ((ext==='xlsx'||ext==='xls') && typeof XLSX !== 'undefined') {
+    // Leer xlsx con librería
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws);
+        document.getElementById('fileNameSpan').textContent = file.name;
+        loadData(data);
+      } catch(err) { showToast('❌ Error leyendo Excel: ' + err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+
+  } else if ((ext==='xlsx'||ext==='xls') && typeof XLSX === 'undefined') {
+    showToast('⚠️ Falta xlsx.min.js. Guarda el archivo como CSV desde Excel y súbelo en .csv');
+  } else {
+    showToast('❌ Formato no soportado. Usa .xlsx, .xls o .csv');
+  }
+});
+
+// Parser CSV robusto (maneja comillas, punto y coma o coma como separador)
+function parseCSV(text) {
+  // Detectar separador: ; o ,
+  const firstLine = text.split('\n')[0];
+  const sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const headers = splitCSVLine(lines[0], sep);
+  const result = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCSVLine(lines[i], sep);
+    if (vals.length < 2) continue;
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h.trim()] = (vals[idx] || '').trim();
+    });
+    result.push(row);
+  }
+  return result;
+}
+
+function splitCSVLine(line, sep) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; }
+    else if (c === sep && !inQ) { result.push(cur); cur = ''; }
+    else { cur += c; }
+  }
+  result.push(cur);
+  return result.map(s => s.replace(/^"|"$/g,''));
+}
+
+// ── PROCESAR DATOS ─────────────────────────────
+function loadData(data) {
+  if (!data.length) { showToast('⚠️ El archivo está vacío'); return; }
+
+  const keys = Object.keys(data[0]);
+  latKey = keys.find(k => /lat/i.test(k));
+  lonKey = keys.find(k => /lo?ng?|lng/i.test(k));
+
+  if (!latKey || !lonKey) {
+    showToast('❌ No se encontraron columnas de coordenadas (lat / lon)');
+    return;
+  }
+
+  allData = data.filter(r => {
+    // Reemplazar comas por puntos en coordenadas (formato europeo)
+    const laStr = String(r[latKey]).replace(',','.');
+    const loStr = String(r[lonKey]).replace(',','.');
+    const la = parseFloat(laStr), lo = parseFloat(loStr);
+    r[latKey] = laStr; r[lonKey] = loStr; // normalizar para luego
+    return !isNaN(la) && !isNaN(lo) && la>=-90 && la<=90 && lo>=-180 && lo<=180;
+  });
+
+  if (!allData.length) { showToast('⚠️ No hay coordenadas válidas'); return; }
+
+  filterKeys = keys.filter(k =>
+    !/lat/i.test(k) &&
+    !/lo?ng?|lng/i.test(k) &&
+    !String(k).startsWith('__EMPTY')   // Fix 4: ignorar columnas vacías del CSV
+  );
+
+  buildFilters();
+  buildColorSelector();
+
+  // Activar primera columna como color por defecto
+  if (filterKeys.length > 0) {
+    const sel = document.getElementById('colorColSelect');
+    colorColumn = sel.value || filterKeys[0];
+    colorMap = makeColorMap(colorColumn, [...new Set(allData.map(r=>r[colorColumn]).filter(v=>v!=null&&v!==''))]);
+    renderLegend();
+  }
+
+  filteredData = [...allData];
+  renderMarkers();
+  initSearcher();
+
+  document.getElementById('hintBox').style.display       = 'none';
+  document.getElementById('uploadArea').style.display    = 'none';
+  document.getElementById('fileLoaded').style.display    = 'block';
+  document.getElementById('filtersArea').style.display   = 'block';
+  document.getElementById('colorKeySection').style.display = 'block';
+  document.getElementById('statsArea').style.display     = 'block';
+  document.getElementById('btnClear').style.display      = 'block';
+  document.getElementById('btnStats').style.display      = 'block';
+  document.getElementById('btnCompare').style.display    = 'block';
+  document.getElementById('statsDrawerTab').classList.add('visible');
+  document.getElementById('compareDrawerTab').classList.add('visible');
+  updateStats();
+  showToast('✅ ' + allData.length + ' puntos cargados');
+}
+
+// ── SELECTOR COLUMNA COLOR ─────────────────────
+function buildColorSelector() {
+  const sel = document.getElementById('colorColSelect');
+  sel.innerHTML = '';
+  filterKeys.forEach(key => {
+    const vals = [...new Set(allData.map(r=>r[key]).filter(v=>v!=null&&v!==''))];
+    if (!vals.length || vals.length > 100) return;
+    const opt = document.createElement('option');
+    opt.value = key; opt.textContent = '🎨 ' + key;
+    sel.appendChild(opt);
+  });
+  sel.onchange = e => {
+    colorColumn = e.target.value;
+    const vals = [...new Set(allData.map(r=>r[colorColumn]).filter(v=>v!=null&&v!==''))];
+    colorMap = makeColorMap(colorColumn, vals);
+    renderLegend();
+    renderMarkers();
+  };
+}
+
+function renderLegend() {
+  const c = document.getElementById('legendContainer');
+  c.innerHTML = '';
+  if (!colorColumn) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'legend-items';
+  Object.entries(colorMap).forEach(([val, color]) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const dot = document.createElement('div');
+    dot.className = 'legend-dot';
+    dot.style.background = color;
+    const lbl = document.createElement('span');
+    lbl.textContent = val;
+    item.appendChild(dot); item.appendChild(lbl);
+    wrap.appendChild(item);
+  });
+  c.appendChild(wrap);
+}
+
+// ── FILTROS ────────────────────────────────────
+// Columnas que usan multiselección con checkboxes
+const MULTI_SELECT_COLS = ['sector 2'];
+
+// currentFilters: { key: valor_string }  para filtros normales
+// multiFilters:   { key: Set(valores) }  para multiselección
+let multiFilters = {};
+
+function buildFilters() {
+  const fc = document.getElementById('filtersContainer');
+  fc.innerHTML = ''; currentFilters = {}; multiFilters = {};
+
+  filterKeys.forEach(key => {
+    const nc = norm(key);
+
+    // Para Sector 2: extraer todos los sub-valores separados por coma
+    if (MULTI_SELECT_COLS.includes(nc)) {
+      const subVals = new Set();
+      allData.forEach(r => {
+        if (r[key]) String(r[key]).split(',').forEach(v => {
+          const t = v.trim();
+          if (t) subVals.add(t);
+        });
+      });
+      if (!subVals.size) return;
+      buildMultiFilter(fc, key, [...subVals].sort());
+      return;
+    }
+
+    // Filtro normal (select)
+    const vals = [...new Set(allData.map(r=>r[key]).filter(v=>v!=null&&v!==''))];
+    if (!vals.length || vals.length > 100) return;
+
+    const lbl = document.createElement('div');
+    lbl.className = 'section-label'; lbl.style.marginTop='4px'; lbl.textContent = key;
+
+    const sel = document.createElement('select');
+    sel.className = 'filter-select';
+    const def = document.createElement('option');
+    def.value=''; def.textContent='Todos ('+vals.length+')';
+    sel.appendChild(def);
+    vals.sort().forEach(v => {
+      const opt = document.createElement('option');
+      opt.value=v; opt.textContent=v; sel.appendChild(opt);
+    });
+    sel.onchange = e => {
+      if (e.target.value) currentFilters[key]=e.target.value;
+      else delete currentFilters[key];
+      applyFilters();
+    };
+    fc.appendChild(lbl); fc.appendChild(sel);
+  });
+
+  // Mostrar botón de reiniciar si hay filtros disponibles
+  const btnReset = document.getElementById('btnResetFilters');
+  if (filterKeys.length > 0) {
+    btnReset.style.display = 'block';
+  }
+}
+
+// Botón reiniciar filtros
+document.getElementById('btnResetFilters').addEventListener('click', () => {
+  // Limpiar todos los filtros
+  currentFilters = {};
+  multiFilters = {};
+
+  // Resetear todos los selects a "Todos"
+  document.querySelectorAll('#filtersContainer .filter-select').forEach(sel => {
+    sel.value = '';
+  });
+
+  // Desmarcar todos los checkboxes y marcar solo "Todos"
+  document.querySelectorAll('#filtersContainer input[type="checkbox"]').forEach(cb => {
+    if (!cb.dataset.val) {
+      cb.checked = true;  // "Todos"
+    } else {
+      cb.checked = false;
+    }
+  });
+
+  // Aplicar filtros (que ahora están vacíos = mostrar todo)
+  filteredData = [...allData];
+  renderMarkers();
+  updateStats();
+  if (heatActive) updateHeatmap();
+
+  showToast('✅ Filtros reiniciados');
+});
+
+function buildMultiFilter(fc, key, vals) {
+  const lbl = document.createElement('div');
+  lbl.className = 'section-label'; lbl.style.marginTop='4px';
+  lbl.textContent = key + ' (multiselección)';
+  fc.appendChild(lbl);
+
+  // Wrapper con estilo de caja scrollable
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#0f3460;border-radius:6px;padding:8px;max-height:160px;overflow-y:auto;margin-bottom:10px;';
+
+  // Checkbox "Todos"
+  const allRow = makeCheckRow('Todos', true);
+  allRow.querySelector('input').addEventListener('change', e => {
+    if (e.target.checked) {
+      // Desmarcar todos los demás y limpiar filtro
+      box.querySelectorAll('input[data-val]').forEach(cb => cb.checked = false);
+      delete multiFilters[key];
+      applyFilters();
+    }
+  });
+  box.appendChild(allRow);
+
+  vals.forEach(v => {
+    const row = makeCheckRow(v, false);
+    const cb  = row.querySelector('input');
+    cb.dataset.val = v;
+    cb.addEventListener('change', () => {
+      // Recoger todos los marcados
+      const checked = [...box.querySelectorAll('input[data-val]')]
+        .filter(c => c.checked).map(c => c.dataset.val);
+      // Desmarcar "Todos" si hay algo seleccionado
+      allRow.querySelector('input').checked = checked.length === 0;
+      if (checked.length) multiFilters[key] = new Set(checked);
+      else delete multiFilters[key];
+      applyFilters();
+    });
+    box.appendChild(row);
+  });
+
+  fc.appendChild(box);
+}
+
+function makeCheckRow(label, checked) {
+  const row = document.createElement('label');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;color:#ccd6f6;padding:3px 0;cursor:pointer;';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.checked = checked;
+  cb.style.cssText = 'accent-color:#e94560;cursor:pointer;';
+  const span = document.createElement('span');
+  span.textContent = label;
+  row.appendChild(cb); row.appendChild(span);
+  return row;
+}
+
+function applyFilters() {
+  filteredData = allData.filter(row => {
+    const normalOk = Object.entries(currentFilters).every(([k,v]) => String(row[k])===String(v));
+    if (!normalOk) return false;
+    for (const [k, selectedSet] of Object.entries(multiFilters)) {
+      const cellVals = String(row[k]||'').split(',').map(s=>s.trim());
+      const hasAny = cellVals.some(cv => selectedSet.has(cv));
+      if (!hasAny) return false;
+    }
+    return true;
+  });
+  renderMarkers(); updateStats();
+  if (document.getElementById('statsDrawer').classList.contains('open'))   buildStatsPanel();
+  if (document.getElementById('compareDrawer').classList.contains('open')) buildCmpPanel();
+  syncDrawerFilters();
+}
+
+// ── COLUMNAS A OCULTAR EN POPUP ────────────────
+function isCoordKey(k) {
+  return /lat/i.test(k) || /lo?ng?|lng/i.test(k);
+}
+
+// ── MARCADORES ─────────────────────────────────
+function renderMarkers() {
+  markerLayer.clearLayers();
+  filteredData.forEach(row => {
+    const la = parseFloat(String(row[latKey]).replace(',','.'));
+    const lo = parseFloat(String(row[lonKey]).replace(',','.'));
+    if (isNaN(la)||isNaN(lo)) return;
+
+    const fill = (colorColumn && colorMap[String(row[colorColumn])]) || '#e94560';
+
+    const m = L.circleMarker([la,lo], {
+      radius:7, fillColor:fill, color:'#fff', weight:2, opacity:1, fillOpacity:0.9
+    });
+
+    // Popup: título "Datos de la empresa", sin lat/lon
+    let html = '<div class="popup-inner">';
+    html += '<div class="popup-title" style="color:'+fill+';border-color:'+fill+'">🏢 Datos de la empresa</div>';
+    Object.entries(row).forEach(([k,v]) => {
+      if (isCoordKey(k)) return;          // ocultar lat/lon
+      if (v==null || v==='') return;
+      html += '<div class="popup-row"><strong>'+k+':</strong> '+v+'</div>';
+    });
+    html += '</div>';
+
+    m.bindPopup(html, {maxWidth:320});
+    m.on('mouseover', function(){ this.setStyle({radius:11,weight:3}); this.openPopup(); });
+    m.on('mouseout',  function(){ this.setStyle({radius:7,weight:2}); });
+    markerLayer.addLayer(m);
+  });
+
+  if (filteredData.length > 0) {
+    const coords = filteredData
+      .map(r=>[parseFloat(String(r[latKey]).replace(',','.')), parseFloat(String(r[lonKey]).replace(',','.'))])
+      .filter(([la,lo])=>!isNaN(la)&&!isNaN(lo));
+    if (coords.length) map.fitBounds(coords, {padding:[40,40], maxZoom:10});
+  }
+}
+
+// ── BUSCADOR ───────────────────────────────────
+let nameKey = null; // columna del nombre de empresa
+
+function initSearcher() {
+  // Detectar columna de nombre: buscar "empresa", "nombre", "name", "compañia"
+  nameKey = filterKeys.find(k => /empresa|nombre|name|compan|compañ/i.test(k))
+            || filterKeys[0]; // si no, primera columna disponible
+
+  document.getElementById('searcher').style.display = 'flex';
+
+  const input   = document.getElementById('searchInput');
+  const results = document.getElementById('searchResults');
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    results.innerHTML = '';
+    if (!q) { results.style.display = 'none'; return; }
+
+    const matches = allData.filter(r =>
+      String(r[nameKey]||'').toLowerCase().includes(q)
+    ).slice(0, 10);
+
+    if (!matches.length) {
+      results.style.display = 'none'; return;
+    }
+
+    matches.forEach(row => {
+      const item = document.createElement('div');
+      item.className = 'search-result-item';
+      item.textContent = row[nameKey] || '(sin nombre)';
+      item.addEventListener('click', () => {
+        zoomToRow(row);
+        input.value = row[nameKey] || '';
+        results.style.display = 'none';
+      });
+      results.appendChild(item);
+    });
+    results.style.display = 'block';
+  });
+
+  document.getElementById('searchBtn').addEventListener('click', () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) return;
+    const match = allData.find(r => String(r[nameKey]||'').toLowerCase().includes(q));
+    if (match) zoomToRow(match);
+    else showToast('⚠️ No se encontró ninguna empresa con ese nombre');
+    results.style.display = 'none';
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('searchBtn').click();
+    if (e.key === 'Escape') { results.style.display = 'none'; }
+  });
+
+  // Cerrar resultados al clicar fuera
+  document.addEventListener('click', e => {
+    if (!document.getElementById('searcher').contains(e.target)) {
+      results.style.display = 'none';
+    }
+  });
+}
+
+function zoomToRow(row) {
+  const la = parseFloat(String(row[latKey]).replace(',','.'));
+  const lo = parseFloat(String(row[lonKey]).replace(',','.'));
+  if (isNaN(la)||isNaN(lo)) { showToast('⚠️ Esta empresa no tiene coordenadas válidas'); return; }
+  
+  // Hacer zoom con animación
+  map.setView([la, lo], 14, { animate: true, duration: 0.5 });
+
+  // Esperar a que termine el zoom antes de abrir el popup
+  setTimeout(() => {
+    let found = false;
+    markerLayer.eachLayer(marker => {
+      const mll = marker.getLatLng();
+      // Tolerancia más amplia para encontrar el marcador
+      if (Math.abs(mll.lat - la) < 0.001 && Math.abs(mll.lng - lo) < 0.001) {
+        marker.openPopup();
+        found = true;
+      }
+    });
+    if (!found) {
+      showToast('ℹ️ Empresa localizada en el mapa');
+    }
+  }, 600);
+}
+
+// ── STATS ──────────────────────────────────────
+function updateStats() {
+  document.getElementById('statTotal').textContent   = allData.length;
+  document.getElementById('statVisible').textContent = filteredData.length;
+}
+
+// ── LIMPIAR ────────────────────────────────────
+document.getElementById('btnClear').addEventListener('click', ()=>{
+  allData=[]; filteredData=[]; currentFilters={}; multiFilters={};
+  colorColumn=null; colorMap={}; filterKeys=[];
+  markerLayer.clearLayers();
+  ['filtersContainer','legendContainer'].forEach(id=>document.getElementById(id).innerHTML='');
+  ['hintBox','uploadArea'].forEach(id=>document.getElementById(id).style.display='block');
+  ['fileLoaded','filtersArea','colorKeySection','statsArea','btnClear','btnStats','btnCompare','btnResetFilters'].forEach(id=>document.getElementById(id).style.display='none');
+  document.getElementById('statsDrawerTab').classList.remove('visible');
+  document.getElementById('compareDrawerTab').classList.remove('visible');
+  activeTabKey = '__resumen__'; activeTabKeyB = '__resumen__';
+  cmpFilters = {};
+  closeDrawer(); closeCompare();
+  document.getElementById('searcher').style.display = 'none';
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchResults').style.display = 'none';
+  document.getElementById('fileInput').value='';
+  map.setView([20,0],2);
+});
+
+// ── COLAPSAR ───────────────────────────────────
+document.getElementById('collapseBtn').addEventListener('click', ()=>{
+  const sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed');
+  document.getElementById('collapseBtn').textContent = sb.classList.contains('collapsed') ? '›' : '‹';
+  setTimeout(()=>map.invalidateSize(), 310);
+});
+
+// ── TOAST ──────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 3500);
+}
+
+// ── DRAWERS (estadísticas y comparar) ──────────
+let chartInstances = {};
+let visibleCharts  = { bar: true, pie: true, cards: true };
+let visibleChartsB = { bar: true, pie: true, cards: true };
+let activeTabKey  = '__resumen__';
+let activeTabKeyB = '__resumen__';
+
+// Filtros independientes del drawer B
+let cmpFilters = {};
+
+const STATS_GROUPS = {
+  'Zona':        /zona|region|area|territory/i,
+  'Facturación': /factur|revenue|billing|ingreso|ventas/i,
+  'Sector':      /sector|industria|industry|actividad/i,
+  'País':        /pais|pa[ií]s|country|nacion/i,
+  'Personal':    /personal|empleados|emplead|staff|workers|headcount/i,
+  'Interés':     /inter[eé]s|interest|prioridad|priority/i,
+};
+
+function detectStatsColumns() {
+  const cols = [];
+  filterKeys.forEach(key => {
+    const vals = [...new Set(allData.map(r => r[key]).filter(v => v != null && v !== ''))];
+    if (!vals.length || vals.length > 100) return;
+    for (const [label, regex] of Object.entries(STATS_GROUPS)) {
+      if (regex.test(key)) { cols.push({ key, label, vals }); break; }
+    }
+  });
+  if (!cols.length) {
+    filterKeys.forEach(key => {
+      const vals = [...new Set(allData.map(r => r[key]).filter(v => v != null && v !== ''))];
+      if (vals.length >= 2 && vals.length <= 25) cols.push({ key, label: key, vals });
+    });
+  }
+  return cols;
+}
+
+function getColorForValue(val, colKey) {
+  if (colorMap && colorColumn === colKey && colorMap[val]) return colorMap[val];
+  const nv = norm(val);
+  if (/norte|north/.test(nv))  return '#2ecc71';
+  if (/sur|south/.test(nv))    return '#e74c3c';
+  if (/este|east/.test(nv))    return '#3498db';
+  if (/oeste|west/.test(nv))   return '#f39c12';
+  if (/centro|center|central/.test(nv)) return '#9b59b6';
+  return PALETTE[Math.abs(val.split('').reduce((a,c)=>a+c.charCodeAt(0),0)) % PALETTE.length];
+}
+
+// Filtrar datos con los filtros del drawer B (independientes)
+function getFilteredForB() {
+  return allData.filter(row =>
+    Object.entries(cmpFilters).every(([k,v]) => String(row[k]) === String(v))
+  );
+}
+
+// ── Filtros del drawer A (sincronizados con sidebar) ─────
+function buildDrawerFilters() {
+  buildDrawerFiltersFor('drawerFiltersBody', currentFilters, (key, val) => {
+    if (val) currentFilters[key] = val; else delete currentFilters[key];
+    applyFilters();
+  });
+}
+function syncDrawerFilters() {
+  document.querySelectorAll('#drawerFiltersBody .drawer-filter-select').forEach(sel => {
+    const key = sel.dataset.key;
+    const val = currentFilters[key] || '';
+    [...sel.options].forEach(o => { o.selected = (o.value === val); });
+  });
+}
+
+// ── Filtros del drawer B (independientes) ────────────────
+function buildCmpFilters() {
+  buildDrawerFiltersFor('cmpFiltersBody', cmpFilters, (key, val) => {
+    if (val) cmpFilters[key] = val; else delete cmpFilters[key];
+    buildCmpPanel(); // refrescar B al cambiar sus filtros
+  });
+}
+
+function buildDrawerFiltersFor(containerId, filtersObj, onChange) {
+  const body = document.getElementById(containerId);
+  body.innerHTML = '';
+  filterKeys.forEach(key => {
+    const nc = norm(key);
+    if (MULTI_SELECT_COLS.includes(nc)) return;
+    const vals = [...new Set(allData.map(r => r[key]).filter(v => v != null && v !== ''))];
+    if (!vals.length || vals.length > 100) return;
+
+    const row = document.createElement('div');
+    row.className = 'drawer-filter-row';
+    const lbl = document.createElement('div');
+    lbl.className = 'drawer-filter-label'; lbl.textContent = key; lbl.title = key;
+    const sel = document.createElement('select');
+    sel.className = 'drawer-filter-select';
+    sel.dataset.key = key;
+    const def = document.createElement('option'); def.value = ''; def.textContent = 'Todos';
+    sel.appendChild(def);
+    vals.sort().forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      if (filtersObj[key] === v) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.onchange = e => onChange(key, e.target.value);
+    row.appendChild(lbl); row.appendChild(sel);
+    body.appendChild(row);
+  });
+  if (!body.children.length) body.innerHTML = '<div style="font-size:12px;color:#8892b0;">Sin filtros disponibles</div>';
+}
+
+// ── Toggles collapsibles ──────────────────────────────────
+document.getElementById('drawerFiltersToggle').addEventListener('click', () => {
+  document.getElementById('drawerFiltersBody').classList.toggle('hidden');
+  document.getElementById('drawerFiltersArrow').classList.toggle('collapsed');
+});
+document.getElementById('drawerChartSelectorToggle').addEventListener('click', () => {
+  document.getElementById('chartToggleList').classList.toggle('hidden');
+  document.getElementById('drawerChartSelectorArrow').classList.toggle('collapsed');
+});
+document.getElementById('cmpFiltersToggle').addEventListener('click', () => {
+  document.getElementById('cmpFiltersBody').classList.toggle('hidden');
+  document.getElementById('cmpFiltersArrow').classList.toggle('collapsed');
+});
+document.getElementById('cmpChartSelectorToggle').addEventListener('click', () => {
+  document.getElementById('cmpChartToggleList').classList.toggle('hidden');
+  document.getElementById('cmpChartSelectorArrow').classList.toggle('collapsed');
+});
+
+// ── Reiniciar filtros en drawers ──────────────────────────────
+document.getElementById('statsResetFiltersBtn').addEventListener('click', () => {
+  // Limpiar filtros
+  currentFilters = {};
+  
+  // Reconstruir filtros CON los event listeners
+  buildDrawerFilters();
+  
+  // Actualizar panel
+  renderStatsPanel({ 
+    tabsId: 'statsTabs', 
+    contentId: 'statsContent', 
+    data: allData, 
+    filtersObj: currentFilters, 
+    visObj: visibleCharts, 
+    prefix: 'A', 
+    activeKeyRef: 'activeTabKey', 
+    setActiveKey: k => { activeTabKey = k; }, 
+    instancePrefix: 'stats' 
+  });
+  showToast('✅ Filtros de Stats reiniciados');
+});
+
+document.getElementById('cmpResetFiltersBtn').addEventListener('click', () => {
+  // Limpiar filtros
+  cmpFilters = {};
+  
+  // Reconstruir filtros CON los event listeners
+  buildCmpFilters();
+  
+  // Actualizar panel
+  renderStatsPanel({ 
+    tabsId: 'cmpTabs', 
+    contentId: 'cmpContent', 
+    data: allData, 
+    filtersObj: cmpFilters, 
+    visObj: visibleChartsB, 
+    prefix: 'B', 
+    activeKeyRef: 'activeTabKeyB', 
+    setActiveKey: k => { activeTabKeyB = k; }, 
+    instancePrefix: 'cmp' 
+  });
+  showToast('✅ Filtros de Comparar reiniciados');
+});
+
+// ── Selector gráficos A ───────────────────────────────────
+const CHART_TYPES = [
+  { key: 'bar', label: '📊 Barras' },
+  { key: 'pie', label: '🥧 Tarta'  },
+  { key: 'cards', label: '🃏 Tarjetas' },
+];
+
+function buildChartSelector(listId, visObj, prefix) {
+  const list = document.getElementById(listId);
+  list.innerHTML = '';
+  CHART_TYPES.forEach(({ key, label }) => {
+    const btn = document.createElement('button');
+    btn.className = 'chart-toggle-btn' + (visObj[key] ? ' active' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      visObj[key] = !visObj[key];
+      btn.classList.toggle('active', visObj[key]);
+      document.querySelectorAll('[data-prefix="'+prefix+'"] .chart-wrap[data-type="'+key+'"]')
+        .forEach(el => el.classList.toggle('hidden', !visObj[key]));
+      document.querySelectorAll('[data-prefix="'+prefix+'"] .chart-summary[data-type="cards"]')
+        .forEach(el => el.classList.toggle('hidden', !visObj['cards']));
+    });
+    list.appendChild(btn);
+  });
+}
+
+// ── Build panel genérico ──────────────────────────────────
+function buildPanelFor(cfg) {
+  // cfg: { tabsId, contentId, data, filtersObj, visObj, prefix, activeKeyRef, setActiveKey, instancePrefix }
+  const tabsEl    = document.getElementById(cfg.tabsId);
+  const contentEl = document.getElementById(cfg.contentId);
+  tabsEl.innerHTML = ''; contentEl.innerHTML = '';
+
+  // Destruir charts previos de este panel
+  Object.keys(chartInstances).filter(k => k.startsWith(cfg.instancePrefix))
+    .forEach(k => { chartInstances[k].destroy(); delete chartInstances[k]; });
+
+  const cols = detectStatsColumns();
+  if (!cols.length) { contentEl.innerHTML = '<div class="no-data-msg">Sin columnas para graficar.</div>'; return; }
+
+  const allCols = [{ key: '__resumen__', label: '📋 Resumen' }, ...cols];
+  const activeExists = allCols.some(c => c.key === cfg.activeKey);
+  if (!activeExists) cfg.setActiveKey('__resumen__');
+
+  allCols.forEach((col, idx) => {
+    const isActive = col.key === cfg.activeKey;
+    const tab = document.createElement('div');
+    tab.className = 'stats-tab' + (isActive ? ' active' : '');
+    tab.textContent = col.label;
+    tab.addEventListener('click', () => {
+      cfg.setActiveKey(col.key);
+      tabsEl.querySelectorAll('.stats-tab').forEach(t => t.classList.remove('active'));
+      contentEl.querySelectorAll('.chart-section').forEach(s => s.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(cfg.prefix + '-section-' + idx).classList.add('active');
+    });
+    tabsEl.appendChild(tab);
+
+    const section = document.createElement('div');
+    section.className = 'chart-section' + (isActive ? ' active' : '');
+    section.id = cfg.prefix + '-section-' + idx;
+    section.setAttribute('data-prefix', cfg.prefix);
+    section.appendChild(
+      col.key === '__resumen__'
+        ? buildResumenSection(cfg)
+        : buildChartSection(col, idx, cfg)
+    );
+    contentEl.appendChild(section);
+  });
+}
+
+function buildResumenSection(cfg) {
+  const wrap = document.createElement('div');
+  const total_all = allData.length;
+  const total_fil = cfg.data.length;
+  const hasFilters = total_fil < total_all;
+
+  if (hasFilters) {
+    const badge = document.createElement('div');
+    badge.style.cssText = 'background:rgba(233,69,96,0.15);border:1px solid rgba(233,69,96,0.4);border-radius:8px;padding:7px 11px;font-size:11px;color:#e94560;margin-bottom:10px;';
+    badge.innerHTML = '⚡ Filtros: <strong>' + total_fil + '</strong> de ' + total_all;
+    wrap.appendChild(badge);
+  }
+
+  const summaryEl = document.createElement('div');
+  summaryEl.className = 'chart-summary';
+  summaryEl.setAttribute('data-type', 'cards');
+  summaryEl.classList.toggle('hidden', !cfg.visObj['cards']);
+  summaryEl.style.marginBottom = '12px';
+  const ti = document.createElement('div'); ti.className = 'chart-summary-item';
+  ti.innerHTML = '<div class="cs-num" style="color:#e94560">' + total_fil + '</div><div class="cs-lbl">' + (hasFilters ? 'Filtradas' : 'Total') + '</div>';
+  summaryEl.appendChild(ti);
+  if (hasFilters) {
+    const ai = document.createElement('div'); ai.className = 'chart-summary-item';
+    ai.innerHTML = '<div class="cs-num" style="color:#8892b0">' + total_all + '</div><div class="cs-lbl">Sin filtros</div>';
+    summaryEl.appendChild(ai);
+  }
+  wrap.appendChild(summaryEl);
+
+  detectStatsColumns().forEach((col, i) => {
+    const counts = {};
+    cfg.data.forEach(r => { const v = String(r[col.key]||'').trim(); if(v) counts[v]=(counts[v]||0)+1; });
+    const labels = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    const values = labels.map(l=>counts[l]);
+    const colors = labels.map(l=>getColorForValue(l, col.key));
+    const tot = values.reduce((a,b)=>a+b,0);
+
+    const cWrap = document.createElement('div');
+    cWrap.className = 'chart-wrap'; cWrap.setAttribute('data-type','pie');
+    cWrap.classList.toggle('hidden', !cfg.visObj['pie']);
+    const title = document.createElement('div'); title.className = 'chart-title'; title.textContent = col.label;
+    cWrap.appendChild(title);
+    const canvas = document.createElement('canvas'); canvas.id = cfg.instancePrefix + '-res-' + i;
+    cWrap.appendChild(canvas); wrap.appendChild(cWrap);
+
+    setTimeout(() => {
+      chartInstances[cfg.instancePrefix + '-res-' + i] = new Chart(canvas.getContext('2d'), {
+        type: 'pie',
+        data: { labels, datasets: [{ data: values, backgroundColor: colors, borderColor: '#16213e', borderWidth: 2 }] },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: {
+            legend: { position: 'right', labels: { color: '#ccd6f6', font: { size: 10 }, padding: 8, boxWidth: 10 } },
+            tooltip: { callbacks: { label: c => ' ' + c.label + ': ' + c.parsed + ' (' + Math.round(c.parsed/tot*100) + '%)' } }
+          }
+        }
+      });
+    }, 50);
+  });
+  return wrap;
+}
+
+function buildChartSection(col, idx, cfg) {
+  const wrap = document.createElement('div');
+  const total_all = allData.length;
+  const hasFilters = cfg.data.length < total_all;
+
+  if (hasFilters) {
+    const badge = document.createElement('div');
+    badge.style.cssText = 'background:rgba(233,69,96,0.15);border:1px solid rgba(233,69,96,0.4);border-radius:8px;padding:7px 11px;font-size:11px;color:#e94560;margin-bottom:10px;';
+    badge.innerHTML = '⚡ Filtros: <strong>' + cfg.data.length + '</strong> de ' + total_all;
+    wrap.appendChild(badge);
+  }
+
+  const counts = {};
+  cfg.data.forEach(r => { const v = String(r[col.key]||'').trim(); if(v) counts[v]=(counts[v]||0)+1; });
+  const labels = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+  const values = labels.map(l=>counts[l]);
+  const colors = labels.map(l=>getColorForValue(l, col.key));
+  const tot = values.reduce((a,b)=>a+b,0);
+
+  if (!tot) { wrap.innerHTML += '<div class="no-data-msg">Sin datos con estos filtros.</div>'; return wrap; }
+
+  // Bar
+  const barWrap = document.createElement('div'); barWrap.className = 'chart-wrap'; barWrap.setAttribute('data-type','bar');
+  barWrap.classList.toggle('hidden', !cfg.visObj['bar']);
+  const barTitle = document.createElement('div'); barTitle.className = 'chart-title'; barTitle.textContent = 'Empresas por ' + col.label;
+  barWrap.appendChild(barTitle);
+  const barCanvas = document.createElement('canvas'); barCanvas.id = cfg.instancePrefix + '-bar-' + idx;
+  barWrap.appendChild(barCanvas); wrap.appendChild(barWrap);
+
+  // Pie
+  const pieWrap = document.createElement('div'); pieWrap.className = 'chart-wrap'; pieWrap.setAttribute('data-type','pie');
+  pieWrap.classList.toggle('hidden', !cfg.visObj['pie']);
+  const pieTitle = document.createElement('div'); pieTitle.className = 'chart-title'; pieTitle.textContent = 'Distribución por ' + col.label;
+  pieWrap.appendChild(pieTitle);
+  const pieCanvas = document.createElement('canvas'); pieCanvas.id = cfg.instancePrefix + '-pie-' + idx;
+  pieWrap.appendChild(pieCanvas); wrap.appendChild(pieWrap);
+
+  // Cards
+  const summary = document.createElement('div'); summary.className = 'chart-summary'; summary.setAttribute('data-type','cards');
+  summary.classList.toggle('hidden', !cfg.visObj['cards']);
+  labels.forEach((lbl, i) => {
+    const pct = Math.round(values[i]/tot*100);
+    const item = document.createElement('div'); item.className = 'chart-summary-item';
+    item.innerHTML = '<div class="cs-num" style="color:'+colors[i]+'">'+values[i]+'</div><div class="cs-lbl">'+lbl+'</div><div style="font-size:10px;color:#8892b0;margin-top:2px;">'+pct+'%</div>';
+    summary.appendChild(item);
+  });
+  wrap.appendChild(summary);
+
+  setTimeout(() => {
+    chartInstances[cfg.instancePrefix + '-bar-' + idx] = new Chart(document.getElementById(cfg.instancePrefix + '-bar-' + idx).getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Empresas', data: values, backgroundColor: colors, borderColor: colors, borderWidth: 2, borderRadius: 6 }] },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        scales: {
+          x: { ticks: { color: '#8892b0', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: { ticks: { color: '#8892b0', stepSize: 1 }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => ' ' + c.parsed.y + ' (' + Math.round(c.parsed.y/tot*100) + '%)' } }
+        }
+      }
+    });
+    chartInstances[cfg.instancePrefix + '-pie-' + idx] = new Chart(document.getElementById(cfg.instancePrefix + '-pie-' + idx).getContext('2d'), {
+      type: 'pie',
+      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderColor: '#16213e', borderWidth: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: {
+          legend: { position: 'right', labels: { color: '#ccd6f6', font: { size: 10 }, padding: 8, boxWidth: 10 } },
+          tooltip: { callbacks: { label: c => ' ' + c.label + ': ' + c.parsed + ' (' + Math.round(c.parsed/tot*100) + '%)' } }
+        }
+      }
+    });
+  }, 50);
+  return wrap;
+}
+
+// ── Builds para cada drawer ───────────────────────────────
+function buildStatsPanel() {
+  buildDrawerFilters();
+  buildChartSelector('chartToggleList', visibleCharts, 'stats');
+  buildPanelFor({
+    tabsId: 'statsTabs', contentId: 'statsContent',
+    data: filteredData, visObj: visibleCharts,
+    prefix: 'stats', activeKey: activeTabKey,
+    setActiveKey: k => { activeTabKey = k; },
+    instancePrefix: 'A'
+  });
+}
+
+function buildCmpPanel() {
+  buildCmpFilters();
+  buildChartSelector('cmpChartToggleList', visibleChartsB, 'cmp');
+  buildPanelFor({
+    tabsId: 'cmpTabs', contentId: 'cmpContent',
+    data: getFilteredForB(), visObj: visibleChartsB,
+    prefix: 'cmp', activeKey: activeTabKeyB,
+    setActiveKey: k => { activeTabKeyB = k; },
+    instancePrefix: 'B'
+  });
+}
+
+// ── Posición de los drawers y buscador ───────────────────
+function updateDrawerPositions() {
+  const statsOpen   = document.getElementById('statsDrawer').classList.contains('open');
+  const compareOpen = document.getElementById('compareDrawer').classList.contains('open');
+  const both = statsOpen && compareOpen;
+
+  document.getElementById('statsDrawer').classList.toggle('both', both);
+  document.getElementById('compareDrawer').classList.toggle('both', both);
+  document.getElementById('statsDrawerTab').classList.toggle('both-open', both);
+  document.getElementById('compareDrawerTab').classList.toggle('both-open', both);
+  document.getElementById('statsDrawerTab').classList.toggle('panel-open', statsOpen);
+  document.getElementById('compareDrawerTab').classList.toggle('panel-open', compareOpen);
+
+  // Buscador: se desplaza según cuántos drawers están abiertos
+  const searcher = document.getElementById('searcher');
+  if (both)        searcher.style.right = '950px';
+  else if (statsOpen || compareOpen) searcher.style.right = '490px';
+  else             searcher.style.right = '16px';
+
+  setTimeout(() => map.invalidateSize(), 360);
+}
+
+function openDrawer() {
+  document.getElementById('statsDrawer').classList.add('open');
+  buildStatsPanel();
+  updateDrawerPositions();
+}
+function closeDrawer() {
+  document.getElementById('statsDrawer').classList.remove('open');
+  updateDrawerPositions();
+}
+function openCompare() {
+  document.getElementById('compareDrawer').classList.add('open');
+  buildCmpPanel();
+  updateDrawerPositions();
+}
+function closeCompare() {
+  document.getElementById('compareDrawer').classList.remove('open');
+  updateDrawerPositions();
+}
+
+document.getElementById('btnStats').addEventListener('click', () => {
+  document.getElementById('statsDrawer').classList.contains('open') ? closeDrawer() : openDrawer();
+});
+document.getElementById('btnCompare').addEventListener('click', () => {
+  document.getElementById('compareDrawer').classList.contains('open') ? closeCompare() : openCompare();
+});
+document.getElementById('statsDrawerTab').addEventListener('click', () => {
+  document.getElementById('statsDrawer').classList.contains('open') ? closeDrawer() : openDrawer();
+});
+document.getElementById('compareDrawerTab').addEventListener('click', () => {
+  document.getElementById('compareDrawer').classList.contains('open') ? closeCompare() : openCompare();
+});
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+document.getElementById('compareDrawerClose').addEventListener('click', closeCompare);
+
+</script>
+</body>
+</html>
