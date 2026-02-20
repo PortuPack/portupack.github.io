@@ -6,6 +6,14 @@
   <title>Mapa de Datos Mundial</title>
   <link rel="stylesheet" href="leaflet.css" />
   <script src="leaflet.js"></script>
+  <script>
+    var password = "1234";
+    var pass = prompt("Introduce la contraseña:");
+    if(pass !== password){
+      alert("Contraseña incorrecta");
+      window.location = "https://google.com";
+    }
+  </script>
   <!-- xlsx.min.js es OPCIONAL: si está, permite abrir .xlsx directamente -->
   <script src="xlsx.min.js" onerror="console.log('xlsx no encontrado, solo CSV disponible')"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
